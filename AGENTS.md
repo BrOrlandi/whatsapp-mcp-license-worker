@@ -61,13 +61,17 @@ e-mail chega (Cloudflare Email Routing)
   │
   ├─ corpo decodificado  (decodeMessage: multipart, base64, quoted-printable)
   │
-  ├─ links extraídos      (licenceLinks: regex do servidor de licenças,
+  ├─ links extraídos      (licenceLinks, duas passadas: LINK_REGEX — o
+  │                         servidor de licenças, caso o mail chegue sem
+  │                         reescrita — e TRACKER_REGEX — o redirect /tr/cl/
+  │                         da Brevo, que é o que chega na prática;
   │                         deduplicados, pontuação de citação descartada)
   │
   └─ para cada link: fetch(link, redirect:"follow")   ← o "clique"
-         final contém "code=" ou aponta para o callback do painel?
+         chegou (final tem "code=" ou é o callback do painel)
+         E foi aceito (status < 400)?
          sim → a ativação concluiu lá no painel; para
-         não → tenta o próximo link
+         não → loga o motivo da recusa e tenta o próximo link
 ```
 
 Pontos de decisão importantes do parser (`decodeMessage`/`decodePart`):
@@ -131,33 +135,50 @@ ao vivo pela primeira ativação real — parte também do plano abaixo.
 
 ## Estado atual e plano de implementação
 
-Status: **código pronto e testado; ainda não deployado**. Concluído até aqui:
+Status: **deployado, roteado e validado de ponta a ponta em 21/09/2026.**
+Concluído:
 
 - [x] Worker escrito (`src/worker.js`), zero dependências
-- [x] Parser MIME/link coberto por 10 testes (`test/worker.test.js`)
-- [x] `wrangler.toml` com as vars documentadas
+- [x] Parser MIME/link coberto por 20 testes (`test/worker.test.js`), incluindo
+      o `email()` completo — antes só as funções auxiliares eram exercitadas,
+      e foi por isso que um `matchAll` sem flag `g` chegou em produção
+- [x] `wrangler.toml` com as vars documentadas, `workers_dev = false` (o worker
+      só tem handler de e-mail) e `[observability] enabled = true`
 - [x] README com passo a passo de deploy
 - [x] Integração do lado do painel (whatsapp-mcp, commit `3cb6d7d`):
       `EVOLUTION_LICENSE_AUTO` (padrão `true`) + `EVOLUTION_LICENSE_EMAIL_DOMAIN`
       (padrão `example.com`), wizard registra sozinho e conclui no callback
+- [x] Deploy na conta `<cloudflare-account-id>`
+- [x] Email Routing do `example.com`: subaddressing habilitado
+      (`support_subaddress: true`) e regra exata `whatsappmcp@example.com`
+      → *Send to a Worker*, prioridade 10. O catch-all para
+      `you@example.com` segue intacto e atende todo o resto do domínio
+- [x] **Primeira ativação real**: `whatsappmcp+a1b2c3d4e5f60718` e
+      `whatsappmcp+f0e1d2c3b4a59687` ativaram de verdade. O pressuposto que
+      faltava — que o link é um `GET` simples, sem JS e sem cookie — está
+      confirmado
 
-A fazer, **na ordem**:
+O que a primeira ativação real ensinou, e que nenhum teste sintético pegaria:
 
-1. **Deploy**: `npx wrangler deploy` (requer login na conta Cloudflare do operador)
-2. **Rotear o e-mail, sem catch-all**: no dashboard do `example.com`,
-   Email → Email Routing → Settings → habilitar **Subaddressing**; depois em
-   Routing rules criar a regra exata `whatsappmcp` → *Send to a Worker* →
-   `whatsapp-mcp-license-worker`. Com a regra exata mais o plus addressing,
-   só o correio `whatsappmcp+…` chega ao worker e o resto do domínio segue
-   como está (`FALLBACK_ADDRESS` fica só para quem usar catch-all de propósito)
-3. **Primeira ativação de ponta a ponta** — o único pressuposto ainda não
-   verificado do fluxo inteiro: que o link do e-mail da Evolution é um `GET`
-   simples que redireciona (sem JS, sem cookie). Tudo indica que sim — a
-   página de registro deles é HTML puro — mas ninguém ainda clicou um link
-   desses. Com `npx wrangler tail` aberto, rodar uma instalação do
-   whatsapp-mcp (ou pedir o wizard de novo numa instalação sem licença). Se o
-   clique não concluir, o log mostra exatamente onde parou
-4. Um domínio novo no futuro precisa de duas coisas: MX na Cloudflare com
+- **A Evolution envia pela Brevo, que reescreve todo link da mensagem.** Nada
+  apontando para `license.evolutionfoundation.com.br` sobrevive no corpo; o
+  que chega é `https://<id>.r.bh.d.sendibt3.com/tr/cl/<blob>`, que faz 302
+  para o magic link. O `LINK_REGEX` original nunca casaria — os primeiros
+  e-mails de diagnóstico registraram `candidates []`. Daí o `TRACKER_REGEX`,
+  restrito ao caminho `/tr/cl/`: o mesmo host serve `/tr/op/` (pixel de
+  abertura) e `/tr/un/` (descadastro), e seguir um descadastro é irreversível
+- **Chegar no callback não é o mesmo que ser aceito.** O painel responde 400
+  com a página de erro quando o licenciador recusa o código; julgar pela URL
+  final reportava recusa como sucesso, que é pior do que falhar, porque nada
+  parece errado. `click()` agora lê o status e loga o motivo da recusa
+
+Ainda em aberto:
+
+1. `FALLBACK_ADDRESS` não está configurado. Hoje não faz falta: a regra de
+   roteamento é exata, então só correio de licença chega ao worker. Passaria a
+   fazer se alguém escrever para `whatsappmcp@example.com` sem o `+id` — o
+   worker registra `ignored mail` e descarta
+2. Um domínio novo no futuro precisa de duas coisas: MX na Cloudflare com
    Email Routing habilitado (e subaddressing ligado), e
    `EVOLUTION_LICENSE_EMAIL_DOMAIN` apontando para ele no painel (o callback
    `/instancias/licenca/retorno` tem que ser público, como já é)

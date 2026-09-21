@@ -17,6 +17,13 @@ WhatsApp MCP, que conclui a ativação e guarda a chave para reativar rebuilds.
   WhatsApp MCP registra licenças
 - **Links** do servidor de licenças (`LINK_REGEX`) encontrados no corpo,
   decodificando quoted-printable, base64 e multipart
+- **Redirects de rastreamento** (`TRACKER_REGEX`), que é como o magic link
+  realmente chega: a Evolution envia pela Brevo, e a Brevo reescreve todo link
+  da mensagem. Nenhuma URL apontando para `license.evolutionfoundation.com.br`
+  sobrevive no corpo — só `https://<id>.r.bh.d.sendibt3.com/tr/cl/<blob>`, que
+  faz 302 para ela. O padrão casa apenas o caminho `/tr/cl/` (clique): o mesmo
+  host serve `/tr/op/` (pixel de abertura) e `/tr/un/` (descadastro), e um
+  descadastro seguido não se desfaz depois
 - Qualquer outra coisa é **encaminhada** para `FALLBACK_ADDRESS` quando essa
   variável existe — assim o worker pode ficar atrás de uma regra catch-all sem
   engolir o correio pessoal do domínio
@@ -52,7 +59,18 @@ WhatsApp MCP, que conclui a ativação e guarda a chave para reativar rebuilds.
    DNS.
 
 4. Para conferir depois de uma ativação: **Workers →
-   whatsapp-mcp-license-worker → Logs**, ou `wrangler tail`.
+   whatsapp-mcp-license-worker → Logs**, ou `wrangler tail`. O
+   `wrangler.toml` já traz `[observability] enabled = true`; sem isso o
+   Cloudflare não retém nada e uma exceção vira só um contador de erro.
+
+### Testar sem passar pelo painel
+
+Encaminhe um e-mail de ativação da Evolution para
+`whatsappmcp+<qualquer-coisa>@example.com` (o sufixo depois do `+` precisa
+casar `[a-z0-9-]+`) com o `wrangler tail` aberto. **O worker clica de verdade
+no link**: encaminhe um e-mail já usado se não quiser consumir um token — o
+log ainda mostra o `GET`, o status e a URL final, que é o pipeline inteiro
+menos o efeito no licenciador.
 
 ## Testes
 

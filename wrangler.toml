@@ -26,6 +26,10 @@ enabled = true
 # Evolution Foundation.
 # LINK_REGEX = "https://license\\.evolutionfoundation\\.com\\.br[^\\s\"'<>\\\\]*"
 
+# Onde procurar o redirect de rastreamento que a Brevo coloca no lugar do
+# link original — é este que o worker encontra na prática.
+# TRACKER_REGEX = "https://[a-z0-9.-]+\\.sendibt[0-9]*\\.com/tr/cl/[^\\s\"'<>\\\\]*"
+
 # Fallback opcional, só se um catch-all também rotear para este worker: mail
 # que não é do WhatsApp MCP é encaminhado aqui para não sumir.
 # FALLBACK_ADDRESS = "you@example.com"
