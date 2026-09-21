@@ -1,4 +1,4 @@
-# WhatsApp MCP licence worker
+# WhatsApp MCP license worker
 
 Um Cloudflare Email Worker que remove o último clique humano da ativação da
 licença da Evolution Go.
