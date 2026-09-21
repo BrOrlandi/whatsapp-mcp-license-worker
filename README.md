@@ -13,7 +13,7 @@ WhatsApp MCP, que conclui a ativação e guarda a chave para reativar rebuilds.
 ## O que ele aceita
 
 - **Destinatários** que casem com `RECIPIENT_REGEX` (padrão:
-  `^whatsappmcp-[a-z0-9-]+@example\.com$`) — os endereços com que o painel do
+  `^whatsappmcp\+[a-z0-9-]+@example\.com$`) — os endereços com que o painel do
   WhatsApp MCP registra licenças
 - **Links** do servidor de licenças (`LINK_REGEX`) encontrados no corpo,
   decodificando quoted-printable, base64 e multipart
@@ -37,11 +37,16 @@ WhatsApp MCP, que conclui a ativação e guarda a chave para reativar rebuilds.
    ```
 
 3. No dashboard da Cloudflare do domínio (**example.com**), em
-   **Email → Email Routing → Routing rules**:
-   - crie uma regra **Catch-all** (ou específica se preferir) com ação
-     **Send to a Worker** → `whatsapp-mcp-license-worker`
-   - configure `FALLBACK_ADDRESS` nas variáveis do worker se o catch-all vai
-     pegar correio de outras pessoas
+   **Email → Email Routing**:
+   - em **Settings**, habilite **Subaddressing** (plus addressing) — é o que
+     faz a regra de `whatsappmcp` casar com todos os `whatsappmcp+<detalhe>`
+   - em **Routing rules**, crie uma regra com o endereço **`whatsappmcp`**,
+     ação **Send to a Worker** → `whatsapp-mcp-license-worker`
+
+   Não é preciso (e não é recomendado) colocar o worker no catch-all: com a
+   regra exata, só o correio de licença chega aqui e o resto do domínio
+   continua exatamente como está. `FALLBACK_ADDRESS` só faz sentido se você
+   resolver mesmo assim usar catch-all.
 
    O MX e o SPF do domínio já estão no Cloudflare — nada mais para mexer no
    DNS.
@@ -61,7 +66,7 @@ runtime do Cloudflare, que fornece `fetch` e a API de Email Workers).
 ## Como isso se liga ao WhatsApp MCP
 
 O painel do [whatsapp-mcp](https://github.com/BrOrlandi/whatsapp-mcp)
-registra a licença com um endereço `whatsappmcp-<id-aleatório>@example.com`
+registra a licença com um endereço `whatsappmcp+<id-aleatório>@example.com`
 quando a variável `EVOLUTION_LICENSE_AUTO` está habilitada (padrão). O e-mail
 cai neste worker, o worker clica, e o painel conclui. Com a variável em
 `false`, o painel usa o ciclo manual: o operador informa o próprio e-mail e

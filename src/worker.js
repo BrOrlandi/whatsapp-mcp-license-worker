@@ -10,14 +10,18 @@
 // activation.
 //
 // It only acts on mail addressed to the addresses this project registers
-// licences under — `whatsappmcp-<id>@<domain>` — everything else is
+// licences under — `whatsappmcp+<id>@<domain>` — everything else is
 // forwarded to a fallback address when one is configured (so the worker can
 // sit behind a catch-all rule without swallowing anyone's personal mail).
 
 // RECIPIENT_REGEX filters which mail this worker acts on. The default
-// matches the addresses whatsapp-mcp registers licences with, on the operator's
-// domain; override per deployment with the RECIPIENT_REGEX var.
-const defaultRecipient = "^whatsappmcp-[a-z0-9-]+@example\\.com$"
+// matches the plus-addressed form the whatsapp-mcp panel registers licences
+// with — `whatsappmcp+<id>@example.com` — because Cloudflare Email Routing
+// rules match the base local part and keep the `+detail` for the worker to
+// read: one exact rule (whatsappmcp@, no catch-all needed) routes every
+// licence email here and nothing else. Override per deployment with the
+// RECIPIENT_REGEX var.
+const defaultRecipient = "^whatsappmcp\\+[a-z0-9-]+@example\\.com$"
 // LINK_REGEX finds the licensing server's URLs in the message body.
 const defaultLink = "https://license\\.evolutionfoundation\\.com\\.br[^\\s\"'<>\\\\]*"
 
@@ -29,11 +33,17 @@ function pattern(env, fallback, flags = "") {
   }
 }
 
+// isLicenceRecipient tells whether an address belongs to this project's
+// licences. Exported for tests; the email() handler applies the same default
+// with an env override on top.
+export function isLicenceRecipient(to, override) {
+  return pattern(override, defaultRecipient).test((to || "").toLowerCase())
+}
+
 export default {
   async email(message, env) {
     const to = (message.to || "").toLowerCase()
-    const recipient = pattern(env.RECIPIENT_REGEX, defaultRecipient)
-    if (!recipient.test(to)) {
+    if (!isLicenceRecipient(to, env.RECIPIENT_REGEX)) {
       // Not ours. A catch-all rule should not eat mail meant for a person,
       // so hand it over when there is somewhere to hand it to.
       if (env.FALLBACK_ADDRESS) {

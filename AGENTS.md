@@ -27,7 +27,7 @@ prova de que quem pediu a licença controla o endereço.
 
 A solução deste worker muda a base da prova: em vez do e-mail *pessoal* do
 operador, a licença é registrada com um endereço do domínio da implantação
-(`whatsappmcp-<id>@example.com`), cujo MX é Cloudflare Email Routing. O
+(`whatsappmcp+<id>@example.com`), cujo MX é Cloudflare Email Routing. O
 e-mail cai aqui, e o worker faz o mesmo `GET` que um navegador faria. A prova
 de identidade deixa de ser "quem lê a caixa de entrada" e passa a ser "quem
 controla o domínio e o servidor" — o mesmo modelo de confiança da validação
@@ -44,10 +44,19 @@ do whatsapp-mcp**.
 Entrada: `src/worker.js`, um Email Worker do Cloudflare (roda no event
 `email(message, env)` — sem HTTP handler, sem rotas).
 
+**Roteamento (quem chega aqui):** o painel registra licenças como
+`whatsappmcp+<id-aleatório>@example.com`. A Cloudflare tem uma regra
+**exata** de `whatsappmcp` → Send to a Worker, e o *subaddressing*
+(plus addressing, ligado nos Settings do Email Routing) faz essa regra casar
+com qualquer `whatsappmcp+<detalhe>` — o detalhe chega preservado em
+`message.to` e o `RECIPIENT_REGEX` confirma que o endereço é nosso. Nada de
+catch-all: o correio pessoal do domínio nunca passa por este worker, e
+`FALLBACK_ADDRESS` é só um plugue opcional para quem insistir no catch-all.
+
 ```
 e-mail chega (Cloudflare Email Routing)
   │
-  ├─ destinatário casa com RECIPIENT_REGEX?  (padrão: ^whatsappmcp-…@example\.com$)
+  ├─ destinatário casa com RECIPIENT_REGEX?  (padrão: ^whatsappmcp+…@example\.com$)
   │    não → encaminha para FALLBACK_ADDRESS (se houver) ou ignora com log
   │
   ├─ corpo decodificado  (decodeMessage: multipart, base64, quoted-printable)
@@ -77,14 +86,16 @@ Configuração, tudo por variáveis (vars) do wrangler, nenhuma é segredo:
 
 | Var | Padrão | O que faz |
 |---|---|---|
-| `RECIPIENT_REGEX` | `^whatsappmcp-[a-z0-9-]+@example\.com$` | quais destinatários são "nossos" |
+| `RECIPIENT_REGEX` | `^whatsappmcp\+[a-z0-9-]+@example\.com$` | quais destinatários são "nossos" |
 | `LINK_REGEX` | `https://license\.evolutionfoundation\.com\.br[^\s"'<>\\]*` | onde procurar o link no corpo |
-| `FALLBACK_ADDRESS` | (vazio) | destino do correio que não é nosso (para catch-all não engolir e-mail pessoal) |
+| `FALLBACK_ADDRESS` | (vazio) | destino do correio que não é nosso — só relevante com catch-all |
 
 O painel do whatsapp-mcp gera o endereço no formato
-`whatsappmcp-<16 hex>@<EVOLUTION_LICENSE_EMAIL_DOMAIN>` (veja
+`whatsappmcp+<16 hex>@<EVOLUTION_LICENSE_EMAIL_DOMAIN>` (veja
 `startAutoLicense` em `internal/httpapi/web.go` de lá). Mudou o formato?
-Atualize `RECIPIENT_REGEX` aqui e o gerador lá, juntos.
+Atualize `RECIPIENT_REGEX` aqui e o gerador lá, juntos — e lembre que a regra
+exata no Email Routing (`whatsappmcp` + subaddressing) é o que faz o
+roteamento funcionar; os três precisam concordar.
 
 ## Falha e observabilidade
 
@@ -123,7 +134,7 @@ ao vivo pela primeira ativação real — parte também do plano abaixo.
 Status: **código pronto e testado; ainda não deployado**. Concluído até aqui:
 
 - [x] Worker escrito (`src/worker.js`), zero dependências
-- [x] Parser MIME/link coberto por 8 testes (`test/worker.test.js`)
+- [x] Parser MIME/link coberto por 10 testes (`test/worker.test.js`)
 - [x] `wrangler.toml` com as vars documentadas
 - [x] README com passo a passo de deploy
 - [x] Integração do lado do painel (whatsapp-mcp, commit `3cb6d7d`):
@@ -133,22 +144,23 @@ Status: **código pronto e testado; ainda não deployado**. Concluído até aqui
 A fazer, **na ordem**:
 
 1. **Deploy**: `npx wrangler deploy` (requer login na conta Cloudflare do operador)
-2. **Rotear o e-mail**: no dashboard do `example.com`, Email → Email
-   Routing → Routing rules → catch-all (ou endereço específico
-   `whatsappmcp-*@`) → *Send to a Worker* → `whatsapp-mcp-license-worker`
-3. **Configurar `FALLBACK_ADDRESS`** nas vars do worker com o destino atual do
-   correio pessoal do domínio, para o catch-all não engolir nada
-4. **Primeira ativação de ponta a ponta** — o único pressuposto ainda não
+2. **Rotear o e-mail, sem catch-all**: no dashboard do `example.com`,
+   Email → Email Routing → Settings → habilitar **Subaddressing**; depois em
+   Routing rules criar a regra exata `whatsappmcp` → *Send to a Worker* →
+   `whatsapp-mcp-license-worker`. Com a regra exata mais o plus addressing,
+   só o correio `whatsappmcp+…` chega ao worker e o resto do domínio segue
+   como está (`FALLBACK_ADDRESS` fica só para quem usar catch-all de propósito)
+3. **Primeira ativação de ponta a ponta** — o único pressuposto ainda não
    verificado do fluxo inteiro: que o link do e-mail da Evolution é um `GET`
    simples que redireciona (sem JS, sem cookie). Tudo indica que sim — a
    página de registro deles é HTML puro — mas ninguém ainda clicou um link
    desses. Com `npx wrangler tail` aberto, rodar uma instalação do
    whatsapp-mcp (ou pedir o wizard de novo numa instalação sem licença). Se o
    clique não concluir, o log mostra exatamente onde parou
-5. Um domínio novo no futuro precisa de duas coisas: MX na Cloudflare com
-   Email Routing habilitado, e `EVOLUTION_LICENSE_EMAIL_DOMAIN` apontando
-   para ele no painel (o callback `/instancias/licenca/retorno` tem que ser
-   público, como já é)
+4. Um domínio novo no futuro precisa de duas coisas: MX na Cloudflare com
+   Email Routing habilitado (e subaddressing ligado), e
+   `EVOLUTION_LICENSE_EMAIL_DOMAIN` apontando para ele no painel (o callback
+   `/instancias/licenca/retorno` tem que ser público, como já é)
 
 Extensões possíveis, se o trabalho continuar depois:
 

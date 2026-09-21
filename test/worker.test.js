@@ -1,13 +1,27 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { licenceLinks, decodeQuotedPrintable, decodeMessage } from "../src/worker.js"
+import { licenceLinks, decodeQuotedPrintable, decodeMessage, isLicenceRecipient } from "../src/worker.js"
+
+test("licence recipients are the plus-addressed panel addresses", () => {
+  assert.ok(isLicenceRecipient("whatsappmcp+8f21af70@example.com"))
+  assert.ok(isLicenceRecipient("WHATSAPPMCP+x@example.com"))
+  assert.ok(!isLicenceRecipient("whatsappmcp-8f21af70@example.com"))
+  assert.ok(!isLicenceRecipient("you@example.com"))
+  assert.ok(!isLicenceRecipient("whatsappmcp@example.com"))
+})
+
+test("the recipient pattern can be overridden", () => {
+  assert.ok(isLicenceRecipient("outra@coisa.com", "^outra@coisa\\.com$"))
+  assert.ok(!isLicenceRecipient("whatsappmcp+8f21af70@example.com", "^outra@coisa\\.com$"))
+})
+
 
 const linkRegex = () => /https:\/\/license\.evolutionfoundation\.com\.br[^\s"'<>\\]*/g
 
 test("extracts the licence link from a plain text email", () => {
   const raw = [
     "From: Evolution <noreply@license.evolutionfoundation.com.br>",
-    "To: whatsappmcp-abc@example.com",
+    "To: whatsappmcp+abc@example.com",
     "Subject: Ativacao",
     "Content-Type: text/plain; charset=utf-8",
     "",
