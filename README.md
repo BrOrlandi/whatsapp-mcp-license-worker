@@ -12,6 +12,15 @@ WhatsApp MCP, que conclui a ativação e guarda a chave para reativar rebuilds.
 
 ## O que ele aceita
 
+- **Remetentes** que casem com `SENDER_REGEX` (padrão: `evolutionfoundation.com.br`
+  e subdomínios) **e cuja origem esteja provada** — `dmarc=pass`, ou um
+  `dkim=pass` alinhado ao domínio do `From`, lidos do cabeçalho
+  `Authentication-Results` que a Cloudflare injeta. Mail que não passa é
+  rejeitado no SMTP, sem nenhum clique. A checagem é feita contra o `From` do
+  cabeçalho, não o remetente do envelope: é nele que o DMARC alinha, e quem
+  envia em massa põe o próprio endereço de bounce no envelope. SPF sozinho não
+  serve — autentica o envelope, que é o domínio de bounce da Brevo, e não diz
+  nada sobre quem a mensagem afirma ser
 - **Destinatários** que casem com `RECIPIENT_REGEX` — os endereços com que o
   painel do WhatsApp MCP registra licenças, na forma
   `whatsappmcp+<id>@<seu-domínio>`. **Esta variável é obrigatória**: o domínio
@@ -78,9 +87,26 @@ WhatsApp MCP, que conclui a ativação e guarda a chave para reativar rebuilds.
    `wrangler.toml` já traz `[observability] enabled = true`; sem isso o
    Cloudflare não retém nada e uma exceção vira só um contador de erro.
 
+### Por que a verificação de remetente existe
+
+Este código é público, então o formato do endereço é público: qualquer pessoa
+pode escrever para ele. E o redirect que o worker segue resolve para o destino
+que quem montou aquela campanha escolheu. Sem checar remetente, o worker é um
+buscador de URLs que qualquer um aponta para onde quiser. O limite de
+`maxLinks` e o corte do corpo em `maxScanBytes` fecham a mesma porta pelo lado
+do volume: uma mensagem com dezenas de links não é uma licença, é alguém
+usando o worker para disparar requisições.
+
 ### Testar sem passar pelo painel
 
-Encaminhe um e-mail de ativação da Evolution para
+Encaminhar o e-mail do seu Gmail **não funciona mais**, e é assim que deve
+ser: o `From` passa a ser você, e a verificação rejeita. Para um teste de
+ponta a ponta, peça uma ativação real pelo painel. Para iterar no parser sem
+e-mail nenhum, use `npx wrangler dev`, que expõe `/cdn-cgi/handler/email`
+localmente e aceita um `.eml` cru via POST.
+
+Se precisar mesmo encaminhar, aponte `SENDER_REGEX` para o seu próprio
+domínio durante o teste. O texto abaixo vale para esse caso: encaminhe para
 `whatsappmcp+<qualquer-coisa>@example.com` (o sufixo depois do `+` precisa
 casar `[a-z0-9-]+`) com o `wrangler tail` aberto. **O worker clica de verdade
 no link**: encaminhe um e-mail já usado se não quiser consumir um token — o

@@ -93,6 +93,7 @@ viraria o default de quem clonar. Ficam no `.env` (git-ignorado, modelo em
 
 | Var | Padrão | O que faz |
 |---|---|---|
+| `SENDER_REGEX` | `^[^@]+@([a-z0-9-]+\.)*evolutionfoundation\.com\.br$` | quem pode fazer o worker clicar — e só com dmarc=pass ou dkim alinhado |
 | `RECIPIENT_REGEX` | `^whatsappmcp\+[a-z0-9-]+@example\.com$` — **casa nada real, de propósito** | quais destinatários são "nossos" |
 | `LINK_REGEX` | `https://license\.evolutionfoundation\.com\.br[^\s"'<>\\]*` | onde procurar o link no corpo |
 | `TRACKER_REGEX` | `https://[a-z0-9.-]+\.sendibt[0-9]*\.com/tr/cl/[^\s"'<>\\]*` | o redirect da Brevo, que é o que chega na prática |
@@ -179,6 +180,16 @@ O que a primeira ativação real ensinou, e que nenhum teste sintético pegaria:
   com a página de erro quando o licenciador recusa o código; julgar pela URL
   final reportava recusa como sucesso, que é pior do que falhar, porque nada
   parece errado. `click()` agora lê o status e loga o motivo da recusa
+
+Verificação de remetente (`senderIsTrusted`), acrescentada quando o repo foi
+preparado para ficar público: com o código aberto, o formato do endereço é
+conhecido, e o tracker que o worker segue resolve para o destino que quem
+montou a campanha escolheu. Sem a checagem o worker é um buscador de URLs
+que qualquer um aponta. Exige `dmarc=pass` ou um `dkim=pass` alinhado, lidos
+do `Authentication-Results` que a Cloudflare injeta, contra o `From` do
+cabeçalho — não o do envelope, que na Brevo é o domínio de bounce dela. SPF
+sozinho não conta pelo mesmo motivo. `maxLinks` e `maxScanBytes` fecham a
+porta do volume.
 
 Ainda em aberto:
 

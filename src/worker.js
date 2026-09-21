@@ -39,6 +39,27 @@ const defaultLink = "https://license\\.evolutionfoundation\\.com\\.br[^\\s\"'<>\
 // noticing afterwards that it was the wrong URL.
 const defaultTracker = "https://[a-z0-9.-]+\\.sendibt[0-9]*\\.com/tr/cl/[^\\s\"'<>\\\\]*"
 
+// SENDER_REGEX decides whose mail may make this worker click anything. This
+// is the check that matters most once the source is public: the recipient
+// pattern is derivable from the code, so anyone can address mail here, and
+// the tracking redirect this worker follows resolves to whatever the campaign
+// that created it points at. Without a sender check the worker is a fetcher
+// anyone can aim.
+//
+// Matched against the header From, not the envelope sender: DMARC aligns on
+// the header From, and bulk senders put their own bounce address in the
+// envelope — Brevo's is not evolutionfoundation.com.br even when the message
+// legitimately is.
+const defaultSender = "^[^@]+@([a-z0-9-]+\\.)*evolutionfoundation\\.com\\.br$"
+
+// A message with more candidate links than this is not a licence email; it is
+// someone using the worker to fan out requests. Real ones carry exactly one.
+const maxLinks = 5
+
+// Scan at most this much of the body. Licence emails run ~15 KB; anything far
+// past that is not one, and the regex scan is the only unbounded work here.
+const maxScanBytes = 256 * 1024
+
 function pattern(env, fallback, flags = "") {
   try {
     return new RegExp(env || fallback, flags)
@@ -52,6 +73,44 @@ function pattern(env, fallback, flags = "") {
 // with an env override on top.
 export function isLicenceRecipient(to, override) {
   return pattern(override, defaultRecipient).test((to || "").toLowerCase())
+}
+
+// headerFrom reads the address DMARC authenticates, falling back to the
+// envelope sender only so that a message with no From header is judged on
+// something rather than waved through as "".
+export function headerFrom(message) {
+  const header = message.headers?.get?.("from") || ""
+  const angled = /<([^>]+)>/.exec(header)
+  const address = angled ? angled[1] : header
+  return (address || message.from || "").trim().toLowerCase()
+}
+
+function escapeForRegExp(text) {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+}
+
+// senderIsTrusted answers whether this message really came from the licensing
+// sender. Two conditions, both required: the address is one we accept, and
+// the mail server proved it.
+//
+// `dmarc=pass` is the strong form — it means the header From domain itself
+// authenticated. An aligned `dkim=pass` is accepted as well, for a sender
+// that signs correctly but publishes no DMARC policy. SPF alone is not
+// enough: it authenticates the envelope, which is the bulk sender's bounce
+// domain, and says nothing about who the message claims to be from.
+//
+// Returns a reason rather than a bare false: a rejection nobody can explain
+// is indistinguishable from a broken worker.
+export function senderIsTrusted(from, authResults, override) {
+  if (!pattern(override, defaultSender).test(from)) {
+    return { ok: false, why: `from ${from || "(empty)"} is not an allowed sender` }
+  }
+  const auth = (authResults || "").toLowerCase()
+  if (/dmarc=pass/.test(auth)) return { ok: true }
+  const domain = from.slice(from.indexOf("@") + 1)
+  const aligned = new RegExp(`dkim=pass[^;]*header\\.d=${escapeForRegExp(domain)}(?![a-z0-9.-])`)
+  if (aligned.test(auth)) return { ok: true }
+  return { ok: false, why: `no dmarc=pass and no dkim=pass aligned with ${domain}` }
 }
 
 export default {
@@ -74,7 +133,25 @@ export default {
       return
     }
 
-    const raw = await new Response(message.raw).text()
+    // Sender check before reading the body: this is the point where an
+    // unverified message stops costing anything. Rejecting rather than
+    // dropping tells a real sender that went wrong, and tells an attacker
+    // nothing useful.
+    const from = headerFrom(message)
+    const auth = message.headers?.get?.("authentication-results") || ""
+    const trust = senderIsTrusted(from, auth, env.SENDER_REGEX)
+    if (!trust.ok) {
+      // The verbatim authentication-results is what makes a wrong allowlist a
+      // one-email diagnosis instead of a guessing game.
+      console.log(`refused mail to ${to}: ${trust.why}; authentication-results: ${auth.slice(0, 300) || "(absent)"}`)
+      message.setReject?.("Sender not authorised for licence activation")
+      return
+    }
+
+    const body = await new Response(message.raw).text()
+    // Bounded on purpose: the regex scan below is the only work here that
+    // grows with what a stranger can send.
+    const raw = body.length > maxScanBytes ? body.slice(0, maxScanBytes) : body
     // The "g" is not cosmetic: licenceLinks walks the body with matchAll,
     // which throws on a non-global pattern.
     //
@@ -84,12 +161,19 @@ export default {
       ...licenceLinks(raw, pattern(env.LINK_REGEX, defaultLink, "g")),
       ...licenceLinks(raw, pattern(env.TRACKER_REGEX, defaultTracker, "g")),
     ]
-    console.log(`licence mail for ${to}: body ${raw.length} bytes, candidates ${links.length}`)
+    console.log(`licence mail for ${to} from ${from}: body ${body.length} bytes, candidates ${links.length}`)
     if (links.length === 0) {
       // Say what was in the message instead, so the next rewriting scheme is
       // identified rather than guessed at. Paths only: these URLs carry the
       // activation capability in their query string.
       console.log(`no licensing link found in mail to ${to}; urls seen: ${JSON.stringify(urlShapes(raw))}`)
+      return
+    }
+
+    if (links.length > maxLinks) {
+      // A real licence email carries one link. Many means the message was
+      // built to make this worker issue requests, so issue none.
+      console.log(`mail to ${to} had ${links.length} candidate links, over the limit of ${maxLinks}; clicking none`)
       return
     }
 

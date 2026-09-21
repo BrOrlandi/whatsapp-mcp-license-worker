@@ -1,6 +1,6 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import worker, { licenceLinks, decodeQuotedPrintable, decodeMessage, isLicenceRecipient, urlShapes, refusalReason } from "../src/worker.js"
+import worker, { licenceLinks, decodeQuotedPrintable, decodeMessage, isLicenceRecipient, urlShapes, refusalReason, headerFrom, senderIsTrusted } from "../src/worker.js"
 
 test("licence recipients are the plus-addressed panel addresses", () => {
   assert.ok(isLicenceRecipient("whatsappmcp+8f21af70@example.com"))
@@ -138,8 +138,26 @@ test("accepts a link pattern given as a plain string", () => {
 // The handler itself, end to end. Every test above builds its own regex, so
 // none of them ever ran the pattern the worker actually uses — which is how a
 // missing "g" flag reached production and threw on the first real email.
-function fakeMessage(to, raw) {
-  return { to, raw: new Blob([raw]).stream(), forward: async () => {} }
+const trustedFrom = "Evolution <noreply@license.evolutionfoundation.com.br>"
+const dmarcPass = "mx.cloudflare.net; dkim=pass header.d=evolutionfoundation.com.br; spf=pass smtp.mailfrom=bounces@sendibt3.com; dmarc=pass header.from=evolutionfoundation.com.br"
+
+// A message the way Cloudflare hands one over: headers included, because the
+// sender check reads them and a stand-in without them would test a worker
+// that does not exist.
+function fakeMessage(to, raw, { from = trustedFrom, auth = dmarcPass } = {}) {
+  const headers = new Headers()
+  if (from) headers.set("from", from)
+  if (auth) headers.set("authentication-results", auth)
+  const rejections = []
+  return {
+    to,
+    from: "bounces@sendibt3.com",
+    headers,
+    raw: new Blob([raw]).stream(),
+    forward: async () => {},
+    setReject: (reason) => rejections.push(reason),
+    rejections,
+  }
 }
 
 const licenceMail = [
@@ -283,4 +301,105 @@ test("pulls the panel's reason out from under its stylesheet", () => {
   const reason = refusalReason(page)
   assert.equal(reason, "Não foi possível ativar a licença: licensing server returned HTTP 401")
   assert.ok(!reason.includes("--bg"))
+})
+
+
+test("headerFrom reads the address DMARC authenticates, not the envelope", () => {
+  const headers = new Headers({ from: "Evolution <noreply@license.evolutionfoundation.com.br>" })
+  assert.equal(
+    headerFrom({ headers, from: "bounces+9@sendibt3.com" }),
+    "noreply@license.evolutionfoundation.com.br")
+  // No From header at all: judge the envelope rather than wave it through.
+  assert.equal(headerFrom({ headers: new Headers(), from: "X@Example.COM" }), "x@example.com")
+})
+
+test("senderIsTrusted needs both an allowed address and proof of it", () => {
+  const ok = senderIsTrusted("noreply@evolutionfoundation.com.br", dmarcPass)
+  assert.equal(ok.ok, true)
+
+  // Right domain, no proof: exactly what a forged From looks like.
+  const unproven = senderIsTrusted("noreply@evolutionfoundation.com.br", "spf=pass; dmarc=fail")
+  assert.equal(unproven.ok, false)
+  assert.match(unproven.why, /no dmarc=pass/)
+
+  // Proof, wrong domain.
+  assert.equal(senderIsTrusted("attacker@example.com", dmarcPass).ok, false)
+
+  // An aligned dkim=pass stands in for a sender with no DMARC policy.
+  assert.equal(senderIsTrusted(
+    "noreply@evolutionfoundation.com.br",
+    "dkim=pass header.d=evolutionfoundation.com.br; dmarc=none").ok, true)
+
+  // A lookalike domain must not satisfy the alignment check.
+  assert.equal(senderIsTrusted(
+    "noreply@evolutionfoundation.com.br",
+    "dkim=pass header.d=evolutionfoundation.com.br.attacker.example; dmarc=none").ok, false)
+
+  // SPF alone authenticates the bulk sender's envelope, not the From.
+  assert.equal(senderIsTrusted(
+    "noreply@evolutionfoundation.com.br",
+    "spf=pass smtp.mailfrom=bounces@sendibt3.com").ok, false)
+})
+
+test("email() refuses a forged sender and clicks nothing", async (t) => {
+  const seen = []
+  t.mock.method(globalThis, "fetch", async (url) => {
+    seen.push(url)
+    return { status: 200, url: `${url}&code=ok` }
+  })
+  const message = fakeMessage("whatsappmcp+a1b2c3d4e5f60718@example.com", licenceMail, {
+    from: "Evolution <noreply@evolutionfoundation.com.br>",
+    auth: "mx.cloudflare.net; spf=pass; dkim=none; dmarc=fail",
+  })
+  await worker.email(message, {})
+  assert.deepEqual(seen, [])
+  assert.equal(message.rejections.length, 1)
+})
+
+test("email() refuses a sender outside the allowlist", async (t) => {
+  const seen = []
+  t.mock.method(globalThis, "fetch", async (url) => {
+    seen.push(url)
+    return { status: 200, url }
+  })
+  const message = fakeMessage("whatsappmcp+a1b2c3d4e5f60718@example.com", licenceMail, {
+    from: "attacker@example.org",
+    auth: "dkim=pass header.d=example.org; dmarc=pass header.from=example.org",
+  })
+  await worker.email(message, {})
+  assert.deepEqual(seen, [])
+  assert.equal(message.rejections.length, 1)
+})
+
+test("email() clicks nothing when a message is stuffed with links", async (t) => {
+  const seen = []
+  t.mock.method(globalThis, "fetch", async (url) => {
+    seen.push(url)
+    return { status: 200, url: `${url}&code=ok` }
+  })
+  const many = Array.from({ length: 12 }, (_, i) =>
+    `https://tracking.r.bh.d.sendibt3.com/tr/cl/blob${i}`).join("\r\n")
+  const raw = [
+    "From: Evolution <noreply@license.evolutionfoundation.com.br>",
+    "Content-Type: text/plain",
+    "",
+    many,
+    "",
+  ].join("\r\n")
+  await worker.email(fakeMessage("whatsappmcp+a1b2c3d4e5f60718@example.com", raw), {})
+  assert.deepEqual(seen, [])
+})
+
+test("SENDER_REGEX can be overridden per deployment", async (t) => {
+  const seen = []
+  t.mock.method(globalThis, "fetch", async (url) => {
+    seen.push(url)
+    return { status: 200, url: `${url}&code=ok` }
+  })
+  const message = fakeMessage("whatsappmcp+a1b2c3d4e5f60718@example.com", licenceMail, {
+    from: "licencas@outro-licenciador.com",
+    auth: "dkim=pass header.d=outro-licenciador.com; dmarc=pass header.from=outro-licenciador.com",
+  })
+  await worker.email(message, { SENDER_REGEX: "^[^@]+@outro-licenciador\\.com$" })
+  assert.equal(seen.length, 1)
 })
