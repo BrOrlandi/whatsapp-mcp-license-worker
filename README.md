@@ -57,7 +57,7 @@ WhatsApp MCP, que conclui a ativação e guarda a chave para reativar rebuilds.
 ## Testes
 
 ```sh
-node --test test/
+node --test
 ```
 
 Sem dependências: só a biblioteca padrão do Node (o worker em si roda no

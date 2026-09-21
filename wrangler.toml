@@ -6,6 +6,11 @@ keep_vars = true
 # publicar em workers.dev só criaria uma URL pública inútil.
 workers_dev = false
 
+# Sem isto o Cloudflare não guarda os console.log/exceções: um e-mail que
+# falha às 3h vira só um contador de erro, sem o motivo.
+[observability]
+enabled = true
+
 # Nada aqui é segredo: o worker só clica em links que chegam por e-mail para
 # endereços que ele reconhece. As variáveis dizem quais endereços são dele e
 # para onde vai o resto do correio.

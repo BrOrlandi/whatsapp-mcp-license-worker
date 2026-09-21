@@ -56,8 +56,9 @@ export default {
     }
 
     const raw = await new Response(message.raw).text()
-    const body = readableBody(raw)
-    const links = licenceLinks(raw, pattern(env.LINK_REGEX, defaultLink))
+    // The "g" is not cosmetic: licenceLinks walks the body with matchAll,
+    // which throws on a non-global pattern.
+    const links = licenceLinks(raw, pattern(env.LINK_REGEX, defaultLink, "g"))
     console.log(`licence mail for ${to}: body ${raw.length} bytes, candidates ${JSON.stringify(links)}`)
     if (links.length === 0) {
       console.log(`no licensing link found in mail to ${to}`)
@@ -74,6 +75,19 @@ export default {
     }
     console.log(`mail to ${to} had links, but none completed the activation`)
   },
+}
+
+// global returns the pattern with the /g flag matchAll requires. Scanning a
+// message for every link is what this function does, so needing /g is its own
+// business rather than a rule callers have to remember: without this, a
+// pattern built without the flag threw
+// "String.prototype.matchAll called with a non-global RegExp argument"
+// and the whole activation email was dropped on the floor.
+function global(linkPattern) {
+  if (linkPattern instanceof RegExp) {
+    return linkPattern.global ? linkPattern : new RegExp(linkPattern.source, linkPattern.flags + "g")
+  }
+  return new RegExp(String(linkPattern), "g")
 }
 
 // click follows the magic link the way a browser would. The licensing server
@@ -97,7 +111,7 @@ export function licenceLinks(raw, linkPattern) {
   const text = decodeMessage(raw)
   const seen = new Set()
   const links = []
-  for (const match of text.matchAll(linkPattern)) {
+  for (const match of text.matchAll(global(linkPattern))) {
     // The bare domain and the registration page are mentions, not the action;
     // a click only matters on a link that carries something.
     const link = match[0].replace(/[)\].,;>]+$/, "")
