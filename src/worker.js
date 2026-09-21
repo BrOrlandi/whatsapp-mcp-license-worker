@@ -14,13 +14,15 @@
 // forwarded to a fallback address when one is configured (so the worker can
 // sit behind a catch-all rule without swallowing anyone's personal mail).
 
-// RECIPIENT_REGEX filters which mail this worker acts on. The default
-// matches the plus-addressed form the whatsapp-mcp panel registers licences
-// with — `whatsappmcp+<id>@example.com` — because Cloudflare Email Routing
-// rules match the base local part and keep the `+detail` for the worker to
-// read: one exact rule (whatsappmcp@, no catch-all needed) routes every
-// licence email here and nothing else. Override per deployment with the
-// RECIPIENT_REGEX var.
+// RECIPIENT_REGEX filters which mail this worker acts on, and every
+// deployment has to set it: the domain is the operator's, so there is no
+// useful default and the one below deliberately matches nothing real.
+//
+// The shape is the plus-addressed form the whatsapp-mcp panel registers
+// licences with — `whatsappmcp+<id>@<your-domain>` — because Cloudflare Email
+// Routing rules match the base local part and keep the `+detail` for the
+// worker to read: one exact rule (`whatsappmcp@`, no catch-all needed) routes
+// every licence email here and nothing else.
 const defaultRecipient = "^whatsappmcp\\+[a-z0-9-]+@example\\.com$"
 // LINK_REGEX finds the licensing server's URLs in the message body.
 const defaultLink = "https://license\\.evolutionfoundation\\.com\\.br[^\\s\"'<>\\\\]*"
@@ -55,6 +57,11 @@ export function isLicenceRecipient(to, override) {
 export default {
   async email(message, env) {
     const to = (message.to || "").toLowerCase()
+    if (!env.RECIPIENT_REGEX) {
+      // Silence here would look exactly like "no licence mail arrived", which
+      // is the failure that takes longest to notice.
+      console.log("RECIPIENT_REGEX is unset: falling back to a pattern that matches nothing. Set it for this deployment's domain.")
+    }
     if (!isLicenceRecipient(to, env.RECIPIENT_REGEX)) {
       // Not ours. A catch-all rule should not eat mail meant for a person,
       // so hand it over when there is somewhere to hand it to.

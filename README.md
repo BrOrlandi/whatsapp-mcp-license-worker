@@ -12,9 +12,11 @@ WhatsApp MCP, que conclui a ativação e guarda a chave para reativar rebuilds.
 
 ## O que ele aceita
 
-- **Destinatários** que casem com `RECIPIENT_REGEX` (padrão:
-  `^whatsappmcp\+[a-z0-9-]+@example\.com$`) — os endereços com que o painel do
-  WhatsApp MCP registra licenças
+- **Destinatários** que casem com `RECIPIENT_REGEX` — os endereços com que o
+  painel do WhatsApp MCP registra licenças, na forma
+  `whatsappmcp+<id>@<seu-domínio>`. **Esta variável é obrigatória**: o domínio
+  é o do operador, então o default no código casa `example.com` de propósito,
+  ou seja, nada real. Sem ela o worker ignora todo e-mail e diz isso no log
 - **Links** do servidor de licenças (`LINK_REGEX`) encontrados no corpo,
   decodificando quoted-printable, base64 e multipart
 - **Redirects de rastreamento** (`TRACKER_REGEX`), que é como o magic link
@@ -30,20 +32,33 @@ WhatsApp MCP, que conclui a ativação e guarda a chave para reativar rebuilds.
 
 ## Deploy
 
-1. Instale o Wrangler e autentique:
+1. Autentique o Wrangler:
 
    ```sh
-   npm install -g wrangler   # ou: npx wrangler
-   wrangler login
+   npx wrangler login
    ```
 
-2. Publique o worker:
+2. Configure o seu domínio. Nada que identifique a sua instalação vive no
+   repositório — tudo vem do `.env`, que é git-ignorado:
 
    ```sh
-   wrangler deploy
+   cp .env.example .env
+   $EDITOR .env          # preencha RECIPIENT_REGEX com o seu domínio
    ```
 
-3. No dashboard da Cloudflare do domínio (**example.com**), em
+3. Publique o worker:
+
+   ```sh
+   npm run deploy
+   ```
+
+   O script lê o `.env` e repassa cada variável ao wrangler como `--var`
+   (o wrangler não lê `.env` para dentro das vars do worker por conta
+   própria — `--env-file` alimenta só o ambiente dele). Ele recusa o deploy
+   se `RECIPIENT_REGEX` estiver faltando, porque um worker sem essa var
+   descarta silenciosamente todo e-mail que chega.
+
+4. No dashboard da Cloudflare do seu domínio, em
    **Email → Email Routing**:
    - em **Settings**, habilite **Subaddressing** (plus addressing) — é o que
      faz a regra de `whatsappmcp` casar com todos os `whatsappmcp+<detalhe>`
@@ -58,7 +73,7 @@ WhatsApp MCP, que conclui a ativação e guarda a chave para reativar rebuilds.
    O MX e o SPF do domínio já estão no Cloudflare — nada mais para mexer no
    DNS.
 
-4. Para conferir depois de uma ativação: **Workers →
+5. Para conferir depois de uma ativação: **Workers →
    whatsapp-mcp-license-worker → Logs**, ou `wrangler tail`. O
    `wrangler.toml` já traz `[observability] enabled = true`; sem isso o
    Cloudflare não retém nada e uma exceção vira só um contador de erro.

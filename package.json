@@ -1,13 +1,14 @@
 {
   "name": "whatsapp-mcp-license-worker",
   "version": "1.0.0",
-  "private": true,
   "description": "Cloudflare Email Worker que ativa licenças da Evolution Go clicando o magic-link que chega por e-mail",
   "type": "module",
   "main": "src/worker.js",
   "scripts": {
     "test": "node --test test/worker.test.js",
-    "deploy": "wrangler deploy",
-    "logs": "wrangler tail"
-  }
+    "deploy": "node scripts/deploy.mjs",
+    "logs": "wrangler tail",
+    "deploy:bare": "wrangler deploy"
+  },
+  "license": "MIT"
 }

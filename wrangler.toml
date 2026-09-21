@@ -11,25 +11,12 @@ workers_dev = false
 [observability]
 enabled = true
 
-# Nada aqui é segredo: o worker só clica em links que chegam por e-mail para
-# endereços que ele reconhece. As variáveis dizem quais endereços são dele e
-# para onde vai o resto do correio.
-
-[vars]
-# Quais destinatários pertencem ao WhatsApp MCP. Padrão: a forma plus-addressed
-# que o painel registra (whatsappmcp+<id>@example.com) — uma regra exata
-# `whatsappmcp` no Email Routing casa com todos os `+detalhe`, então não é
-# preciso catch-all para nada chegar aqui.
-# RECIPIENT_REGEX = "^whatsappmcp\\+[a-z0-9-]+@example\\.com$"
-
-# Onde procurar os links de ativação. Padrão: o servidor de licenças da
-# Evolution Foundation.
-# LINK_REGEX = "https://license\\.evolutionfoundation\\.com\\.br[^\\s\"'<>\\\\]*"
-
-# Onde procurar o redirect de rastreamento que a Brevo coloca no lugar do
-# link original — é este que o worker encontra na prática.
-# TRACKER_REGEX = "https://[a-z0-9.-]+\\.sendibt[0-9]*\\.com/tr/cl/[^\\s\"'<>\\\\]*"
-
-# Fallback opcional, só se um catch-all também rotear para este worker: mail
-# que não é do WhatsApp MCP é encaminhado aqui para não sumir.
-# FALLBACK_ADDRESS = "you@example.com"
+# As variáveis do worker NÃO ficam aqui. Elas dizem qual é o domínio do
+# operador — não são segredo, mas não pertencem a um repositório público, e
+# um valor commitado aqui viraria o default de quem clonar o projeto.
+#
+# Ficam no .env (git-ignorado, modelo em .env.example) e chegam ao worker via
+# `npm run deploy`, que as repassa como --var. O `keep_vars = true` acima é o
+# que faz elas sobreviverem a um `wrangler deploy` feito sem o script.
+#
+# Para `wrangler dev`, o wrangler lê .dev.vars sozinho.

@@ -86,13 +86,21 @@ Pontos de decisão importantes do parser (`decodeMessage`/`decodePart`):
   (bug real que já existiu aqui; os testes prendem)
 - um e-mail sem linha em branco (sem headers) é tratado como corpo puro
 
-Configuração, tudo por variáveis (vars) do wrangler, nenhuma é segredo:
+Configuração, tudo por variáveis (vars) do wrangler, nenhuma é segredo. Elas
+não vivem no `wrangler.toml`: o domínio é do operador, e um valor commitado
+viraria o default de quem clonar. Ficam no `.env` (git-ignorado, modelo em
+`.env.example`) e `npm run deploy` as repassa como `--var`.
 
 | Var | Padrão | O que faz |
 |---|---|---|
-| `RECIPIENT_REGEX` | `^whatsappmcp\+[a-z0-9-]+@example\.com$` | quais destinatários são "nossos" |
+| `RECIPIENT_REGEX` | `^whatsappmcp\+[a-z0-9-]+@example\.com$` — **casa nada real, de propósito** | quais destinatários são "nossos" |
 | `LINK_REGEX` | `https://license\.evolutionfoundation\.com\.br[^\s"'<>\\]*` | onde procurar o link no corpo |
+| `TRACKER_REGEX` | `https://[a-z0-9.-]+\.sendibt[0-9]*\.com/tr/cl/[^\s"'<>\\]*` | o redirect da Brevo, que é o que chega na prática |
 | `FALLBACK_ADDRESS` | (vazio) | destino do correio que não é nosso — só relevante com catch-all |
+
+`RECIPIENT_REGEX` é obrigatória na prática: sem ela o worker cai no default
+`example.com`, ignora todo e-mail e registra isso no log. `npm run deploy`
+recusa o deploy se ela faltar no `.env`.
 
 O painel do whatsapp-mcp gera o endereço no formato
 `whatsappmcp+<16 hex>@<EVOLUTION_LICENSE_EMAIL_DOMAIN>` (veja
@@ -142,7 +150,7 @@ Concluído:
 - [x] Parser MIME/link coberto por 20 testes (`test/worker.test.js`), incluindo
       o `email()` completo — antes só as funções auxiliares eram exercitadas,
       e foi por isso que um `matchAll` sem flag `g` chegou em produção
-- [x] `wrangler.toml` com as vars documentadas, `workers_dev = false` (o worker
+- [x] `wrangler.toml` sem nada identificável, `workers_dev = false` (o worker
       só tem handler de e-mail) e `[observability] enabled = true`
 - [x] README com passo a passo de deploy
 - [x] Integração do lado do painel (whatsapp-mcp, commit `3cb6d7d`):
