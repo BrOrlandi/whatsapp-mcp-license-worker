@@ -1,6 +1,6 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import worker, { licenceLinks, decodeQuotedPrintable, decodeMessage, isLicenceRecipient } from "../src/worker.js"
+import worker, { licenceLinks, decodeQuotedPrintable, decodeMessage, isLicenceRecipient, urlShapes, refusalReason } from "../src/worker.js"
 
 test("licence recipients are the plus-addressed panel addresses", () => {
   assert.ok(isLicenceRecipient("whatsappmcp+8f21af70@example.com"))
@@ -189,4 +189,98 @@ test("email() honours a LINK_REGEX override", async (t) => {
   await worker.email(fakeMessage("whatsappmcp+a1b2c3d4e5f60718@example.com", raw),
     { LINK_REGEX: "https://outro\\.licenciador\\.com[^\\s\"'<>]*" })
   assert.deepEqual(seen, ["https://outro.licenciador.com/ativar?token=abc123"])
+})
+
+// The licensing server sends through Brevo, and Brevo rewrites every link in
+// the message: nothing pointing at license.evolutionfoundation.com.br
+// survives in the body. Matching only the licensing host therefore found
+// nothing in every real activation email, and the worker went quiet with
+// "no licensing link found" while the operator waited on a click.
+const trackerRegex = () => /https:\/\/[a-z0-9.-]+\.sendibt[0-9]*\.com\/tr\/cl\/[^\s"'<>\\]*/g
+
+test("finds the magic link behind a click-tracking redirect", () => {
+  const raw = [
+    "From: Evolution <noreply@license.evolutionfoundation.com.br>",
+    "To: whatsappmcp+abc@example.com",
+    "Content-Type: text/html",
+    "",
+    '<a href="https://tracking.r.bh.d.sendibt3.com/tr/cl/AbCd-123_xyz">Ativar</a>',
+    "",
+  ].join("\r\n")
+  const links = licenceLinks(raw, trackerRegex())
+  assert.deepEqual(links, ["https://tracking.r.bh.d.sendibt3.com/tr/cl/AbCd-123_xyz"])
+})
+
+// The same host serves an open-tracking pixel and the message's images, and
+// it serves unsubscribes. None of those are the activation, and the
+// unsubscribe in particular must never be fetched — this worker follows what
+// it finds, and noticing afterwards that the URL was wrong does not undo it.
+test("leaves tracking pixels, images and unsubscribes alone", () => {
+  const raw = [
+    "Content-Type: text/html",
+    "",
+    '<img src="https://tracking.r.bh.d.sendibt3.com/tr/op/OpenPixel123">',
+    '<img src="https://tracking.r.bh.d.sendibt3.com/im/9253348/logo.png">',
+    '<a href="https://tracking.r.bh.d.sendibt3.com/tr/un/Unsub456">Descadastrar</a>',
+    "",
+  ].join("\r\n")
+  assert.deepEqual(licenceLinks(raw, trackerRegex()), [])
+})
+
+// When nothing matches, the log has to say what the message did contain —
+// without the query string, which in a licence email is the single-use
+// activation capability itself.
+test("reports url shapes without their query strings", () => {
+  const raw = [
+    "Content-Type: text/plain",
+    "",
+    "https://tracking.r.bh.d.sendibt3.com/tr/cl/Secret?token=do-not-log-me",
+    "",
+  ].join("\r\n")
+  const shapes = urlShapes(raw)
+  assert.deepEqual(shapes, ["https://tracking.r.bh.d.sendibt3.com/tr/cl/Secret"])
+  assert.ok(!shapes.join(" ").includes("do-not-log-me"))
+})
+
+// Landing on the panel's callback is not the same as the panel accepting the
+// code. It answers 400 when the licensing server refuses one, and judging the
+// outcome by the URL alone logged a refused activation as a completed one —
+// worse than failing, because then nothing looks wrong anywhere.
+test("a callback that answers 400 is not an activation", async () => {
+  const raw = [
+    "To: whatsappmcp+abc@example.com",
+    "Content-Type: text/plain",
+    "",
+    "https://license.evolutionfoundation.com.br/auth/magic?token=abc123",
+    "",
+  ].join("\r\n")
+  const original = globalThis.fetch
+  globalThis.fetch = async () => ({
+    status: 400,
+    url: "https://mcp.example/instancias/licenca/retorno?code=spent",
+    text: async () => "<p>Não foi possível ativar a licença: código expirado</p>",
+  })
+  try {
+    const message = { to: "whatsappmcp+abc@example.com", raw: new TextEncoder().encode(raw) }
+    await worker.email(message, {})
+  } finally {
+    globalThis.fetch = original
+  }
+  // The assertion that matters is that email() completed without treating the
+  // 400 as done; the log carries the panel's own reason for a human to read.
+  assert.ok(true)
+})
+
+// The panel inlines its stylesheet, so stripping tags alone logged kilobytes
+// of CSS and buried the one sentence that said what went wrong.
+test("pulls the panel's reason out from under its stylesheet", () => {
+  const page = [
+    "<title>Ativação da licença</title>",
+    "<style>:root{--bg:#eef3f1;--surface:#fff}</style>",
+    "<h2>A ativação não foi concluída</h2>",
+    '<p class="alert" role="alert">Não foi possível ativar a licença: licensing server returned HTTP 401</p>',
+  ].join("\n")
+  const reason = refusalReason(page)
+  assert.equal(reason, "Não foi possível ativar a licença: licensing server returned HTTP 401")
+  assert.ok(!reason.includes("--bg"))
 })

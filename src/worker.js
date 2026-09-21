@@ -24,6 +24,18 @@
 const defaultRecipient = "^whatsappmcp\\+[a-z0-9-]+@example\\.com$"
 // LINK_REGEX finds the licensing server's URLs in the message body.
 const defaultLink = "https://license\\.evolutionfoundation\\.com\\.br[^\\s\"'<>\\\\]*"
+// TRACKER_REGEX finds click-tracking redirects, which is how the magic link
+// actually arrives: the licensing server sends through Brevo, and Brevo
+// rewrites every link in the message. Nothing pointing at
+// license.evolutionfoundation.com.br survives in the body — only
+// `https://<id>.r.bh.d.sendibt3.com/tr/cl/<blob>`, which 302s to it.
+//
+// Deliberately only `/tr/cl/` — the click path. The same host also serves
+// `/tr/op/` open-tracking pixels and `/im/` images, which are not links to
+// anything, and `/tr/un/` unsubscribes, which must never be fetched: this
+// worker follows what it finds, and a followed unsubscribe is not undone by
+// noticing afterwards that it was the wrong URL.
+const defaultTracker = "https://[a-z0-9.-]+\\.sendibt[0-9]*\\.com/tr/cl/[^\\s\"'<>\\\\]*"
 
 function pattern(env, fallback, flags = "") {
   try {
@@ -58,10 +70,19 @@ export default {
     const raw = await new Response(message.raw).text()
     // The "g" is not cosmetic: licenceLinks walks the body with matchAll,
     // which throws on a non-global pattern.
-    const links = licenceLinks(raw, pattern(env.LINK_REGEX, defaultLink, "g"))
-    console.log(`licence mail for ${to}: body ${raw.length} bytes, candidates ${JSON.stringify(links)}`)
+    //
+    // Direct links first, on the chance that a deployment's mail arrives
+    // unrewritten; the tracking redirects are what actually shows up today.
+    const links = [
+      ...licenceLinks(raw, pattern(env.LINK_REGEX, defaultLink, "g")),
+      ...licenceLinks(raw, pattern(env.TRACKER_REGEX, defaultTracker, "g")),
+    ]
+    console.log(`licence mail for ${to}: body ${raw.length} bytes, candidates ${links.length}`)
     if (links.length === 0) {
-      console.log(`no licensing link found in mail to ${to}`)
+      // Say what was in the message instead, so the next rewriting scheme is
+      // identified rather than guessed at. Paths only: these URLs carry the
+      // activation capability in their query string.
+      console.log(`no licensing link found in mail to ${to}; urls seen: ${JSON.stringify(urlShapes(raw))}`)
       return
     }
 
@@ -90,6 +111,35 @@ function global(linkPattern) {
   return new RegExp(String(linkPattern), "g")
 }
 
+// refusalReason pulls the panel's own sentence out of the page it returned.
+// Stripping tags alone is not enough: the panel inlines its stylesheet, so a
+// naive strip logs several kilobytes of CSS and buries the one line that says
+// what went wrong. The alert paragraph is where the panel puts it.
+export function refusalReason(html) {
+  const text = String(html)
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+  const alert = text.match(/class="alert"[^>]*>([\s\S]*?)<\/p>/i)
+  return (alert ? alert[1] : text).replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim()
+}
+
+// urlShapes reports the host and path of every URL in a message, with the
+// query string dropped. It is what gets logged when nothing matched, and the
+// query is exactly the part that must not be logged: in a licence email it is
+// the single-use activation capability.
+export function urlShapes(raw) {
+  const found = String(readableBody(raw)).match(/https?:\/\/[^\s"'<>\\)]+/g) || []
+  const shapes = found.map((url) => {
+    try {
+      const parsed = new URL(url)
+      return parsed.origin + parsed.pathname
+    } catch {
+      return url.split("?")[0]
+    }
+  })
+  return [...new Set(shapes)].slice(0, 25)
+}
+
 // click follows the magic link the way a browser would. The licensing server
 // validates and redirects to the panel's activation callback — the final URL
 // tells us it happened.
@@ -99,8 +149,25 @@ async function click(link) {
     headers: { "user-agent": "Mozilla/5.0 (compatible; whatsapp-mcp-license-worker/1.0)" },
   })
   const final = response.url || link
-  const done = /code=/.test(final) || /\/instancias\/licenca\/retorno/.test(final)
+  const arrived = /code=/.test(final) || /\/instancias\/licenca\/retorno/.test(final)
+  // Landing on the callback is not the same as the callback accepting it. The
+  // panel answers 400 when the licensing server refuses the code, and judging
+  // this by the URL alone reported a refused activation as a completed one —
+  // which is worse than failing, because nothing then looks wrong.
+  // Read the status rather than response.ok: the status is what the panel
+  // actually said, and it is the one field every stand-in for a Response is
+  // sure to carry.
+  const accepted = response.status >= 200 && response.status < 400
+  const done = arrived && accepted
   console.log(`GET ${link} -> ${response.status} (final: ${final})`)
+  if (arrived && !accepted) {
+    // The panel renders why in the page it returns; without this the reason
+    // is thrown away and the failure has no explanation anywhere.
+    const reason = typeof response.text === "function"
+      ? refusalReason(await response.text().catch(() => ""))
+      : ""
+    console.log(`the panel refused the activation: ${response.status} ${reason.slice(0, 400)}`)
+  }
   return done ? final : null
 }
 
