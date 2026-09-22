@@ -93,7 +93,7 @@ viraria o default de quem clonar. Ficam no `.env` (git-ignorado, modelo em
 
 | Var | Padrão | O que faz |
 |---|---|---|
-| `SENDER_REGEX` | `^[^@]+@([a-z0-9-]+\.)*evolutionfoundation\.com\.br$` | quem pode fazer o worker clicar — e só com dmarc=pass ou dkim alinhado |
+| `SENDER_REGEX` | `^noreply@evolutionfoundation\.com\.br$` | quem pode fazer o worker clicar — e só com dmarc=pass ou dkim alinhado |
 | `RECIPIENT_REGEX` | `^whatsappmcp\+[a-z0-9-]+@example\.com$` — **casa nada real, de propósito** | quais destinatários são "nossos" |
 | `LINK_REGEX` | `https://license\.evolutionfoundation\.com\.br[^\s"'<>\\]*` | onde procurar o link no corpo |
 | `TRACKER_REGEX` | `https://[a-z0-9.-]+\.sendibt[0-9]*\.com/tr/cl/[^\s"'<>\\]*` | o redirect da Brevo, que é o que chega na prática |

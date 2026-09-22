@@ -138,7 +138,7 @@ test("accepts a link pattern given as a plain string", () => {
 // The handler itself, end to end. Every test above builds its own regex, so
 // none of them ever ran the pattern the worker actually uses — which is how a
 // missing "g" flag reached production and threw on the first real email.
-const trustedFrom = "Evolution <noreply@license.evolutionfoundation.com.br>"
+const trustedFrom = "Evolution <noreply@evolutionfoundation.com.br>"
 const dmarcPass = "mx.cloudflare.net; dkim=pass header.d=evolutionfoundation.com.br; spf=pass smtp.mailfrom=bounces@sendibt3.com; dmarc=pass header.from=evolutionfoundation.com.br"
 
 // A message the way Cloudflare hands one over: headers included, because the
@@ -402,4 +402,15 @@ test("SENDER_REGEX can be overridden per deployment", async (t) => {
   })
   await worker.email(message, { SENDER_REGEX: "^[^@]+@outro-licenciador\\.com$" })
   assert.equal(seen.length, 1)
+})
+
+
+test("the default sender rule is the one confirmed address, not the domain", () => {
+  assert.equal(senderIsTrusted("noreply@evolutionfoundation.com.br", dmarcPass).ok, true)
+  // Another mailbox on the same domain is not automatically the licensing
+  // server; widening this is a deployment's decision, via SENDER_REGEX.
+  const other = senderIsTrusted("marketing@evolutionfoundation.com.br", dmarcPass)
+  assert.equal(other.ok, false)
+  assert.match(other.why, /not an allowed sender/)
+  assert.equal(senderIsTrusted("noreply@license.evolutionfoundation.com.br", dmarcPass).ok, false)
 })

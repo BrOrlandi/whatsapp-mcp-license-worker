@@ -50,7 +50,14 @@ const defaultTracker = "https://[a-z0-9.-]+\\.sendibt[0-9]*\\.com/tr/cl/[^\\s\"'
 // the header From, and bulk senders put their own bounce address in the
 // envelope — Brevo's is not evolutionfoundation.com.br even when the message
 // legitimately is.
-const defaultSender = "^[^@]+@([a-z0-9-]+\\.)*evolutionfoundation\\.com\\.br$"
+//
+// The one confirmed address rather than the whole domain, because the address
+// is what was actually observed and a narrower rule is the cheaper mistake:
+// if the licensing server ever sends from another mailbox, the message is
+// rejected and the log names the address it saw, which is a one-line change
+// to SENDER_REGEX. A domain-wide default would instead quietly accept any
+// mailbox there, including one an attacker talks the provider into creating.
+const defaultSender = "^noreply@evolutionfoundation\\.com\\.br$"
 
 // A message with more candidate links than this is not a licence email; it is
 // someone using the worker to fan out requests. Real ones carry exactly one.

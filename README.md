@@ -12,8 +12,9 @@ WhatsApp MCP, que conclui a ativação e guarda a chave para reativar rebuilds.
 
 ## O que ele aceita
 
-- **Remetentes** que casem com `SENDER_REGEX` (padrão: `evolutionfoundation.com.br`
-  e subdomínios) **e cuja origem esteja provada** — `dmarc=pass`, ou um
+- **Remetentes** que casem com `SENDER_REGEX` (padrão: exatamente
+  `noreply@evolutionfoundation.com.br`, o endereço que o licenciador usa)
+  **e cuja origem esteja provada** — `dmarc=pass`, ou um
   `dkim=pass` alinhado ao domínio do `From`, lidos do cabeçalho
   `Authentication-Results` que a Cloudflare injeta. Mail que não passa é
   rejeitado no SMTP, sem nenhum clique. A checagem é feita contra o `From` do
